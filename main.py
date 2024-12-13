@@ -1,193 +1,126 @@
 import pandas as pd
-from fuzzywuzzy import process
-import hashlib
-import logging
 import hashlib
 
-def generate_unique_id(full_name):
-    """Generates a unique ID by hashing the full name."""
-    return hashlib.sha256(full_name.encode('utf-8')).hexdigest()[:8]
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-def fuzzy_match_names(df1, df2):
-    """Matches names between two DataFrames using fuzzy matching."""
-    matched = []
-    unmatched_df1 = []
-    unmatched_df2 = []
-
-    for i, name1 in df1['FULL NAME'].items():
-        result = process.extractOne(name1, df2['FULL NAME'])
-        if result and len(result) >= 2 and result[1] >= 85:  # Match threshold
-            best_match, score = result[:2]  # Unpack only the first two values
-            matched.append((i, df2[df2['FULL NAME'] == best_match].index[0]))
-        else:
-            unmatched_df1.append(i)
-
-    # Initialize the MATCHED columns safely
-    df1['MATCHED'] = False
-    df2['MATCHED'] = False
-
-    for idx1, idx2 in matched:
-        df1.loc[idx1, 'MATCHED'] = True
-        df2.loc[idx2, 'MATCHED'] = True
-
-    unmatched_df1 = df1[~df1['MATCHED']].drop(columns=['MATCHED'])
-    unmatched_df2 = df2[~df2['MATCHED']].drop(columns=['MATCHED'])
-
-    return df1[df1['MATCHED']], df2[df2['MATCHED']], unmatched_df1, unmatched_df2
-
-def compare_premiums(matched_df1, matched_df2):
-    """Compares premiums and calculates status and issues."""
-    combined = pd.merge(matched_df1, matched_df2, on=['FIRST NAME', 'LAST NAME'], how='outer')
-    combined['STATUS'] = 'Invalid'  # Default to Invalid
-    combined['ISSUE'] = None  # Default to no issue
-
-    for idx, row in combined.iterrows():
-        ee_nav = row.get('PREMIUM TOTAL', None)
-        principal = row.get('PRINCIPAL PREMIUM', None)
-
-        if pd.isna(ee_nav) or pd.isna(principal):
-            # One of the columns is missing
-            combined.loc[idx, 'STATUS'] = 'Invalid'
-            if pd.isna(ee_nav) and pd.isna(principal):
-                combined.loc[idx, 'ISSUE'] = 'Missing Both Premiums'
-            elif pd.isna(ee_nav):
-                combined.loc[idx, 'ISSUE'] = 'Missing EE Nav Premium'
-            elif pd.isna(principal):
-                combined.loc[idx, 'ISSUE'] = 'Missing Principal Premium'
-        elif abs(ee_nav - principal) > 0.01:  # Allow for small floating-point differences
-            # Both columns are present but don't match
-            combined.loc[idx, 'STATUS'] = 'Invalid'
-            combined.loc[idx, 'ISSUE'] = 'Premium Mismatch'
-        else:
-            # Both columns are present and match
-            combined.loc[idx, 'STATUS'] = 'Valid'
-            combined.loc[idx, 'ISSUE'] = None
-
-    return combined
-
-
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-def preprocess_names(df, first_name_col, last_name_col):
-    """Strips whitespace and standardizes case for first and last name columns."""
-    df[first_name_col] = df[first_name_col].str.strip().str.upper()
-    df[last_name_col] = df[last_name_col].str.strip().str.upper()
-    return df
-
-def clean_eenav_file(file_path, output_path, validate_total_premium=True):
-    """Cleans the EE Nav test file."""
-    df = pd.read_excel(file_path)
-
-    # Standardize column names
+# Function to clean EE Nav file
+def clean_eenav_file(df):
+    """
+    Cleans the EE Nav test file by:
+    - Normalizing column names (case-insensitive, trims whitespace)
+    - Ensuring required columns exist
+    - Removing rows with missing names
+    - Removing whitespaces and dashes in names
+    - Converting premiums to numeric values
+    - Assigning unique IDs
+    """
+    # Normalize column names
     df.columns = df.columns.str.strip().str.upper()
 
-    # Rename columns dynamically
-    df.rename(columns={'TOTAL PREMIUM': 'PREMIUM TOTAL'}, inplace=True)
-
-    # Validate required columns
-    required_columns = ['LAST NAME', 'FIRST NAME', 'PREMIUM TOTAL']
+    # Ensure required columns exist
+    required_columns = ['FIRST NAME', 'LAST NAME', 'PREMIUM TOTAL']
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
-        raise KeyError(f"Missing required columns in eenav_test file: {missing_columns}")
+        raise KeyError(f"Missing required columns in EE Nav file: {missing_columns}")
 
-    # Ensure numeric columns
+    # Drop rows where first or last name is missing
+    df = df[df['FIRST NAME'].notna() & df['LAST NAME'].notna()]
+
+    # Remove whitespaces and dashes from names
+    df['FIRST NAME'] = df['FIRST NAME'].str.replace(r"[\s-]", "", regex=True).str.upper()
+    df['LAST NAME'] = df['LAST NAME'].str.replace(r"[\s-]", "", regex=True).str.upper()
+
+    # Ensure PREMIUM TOTAL is numeric
     df['PREMIUM TOTAL'] = pd.to_numeric(df['PREMIUM TOTAL'], errors='coerce').fillna(0)
 
-    # Preprocess names
-    df = preprocess_names(df, 'FIRST NAME', 'LAST NAME')
+    # Assign unique IDs
+    df['UNIQUE ID'] = df.apply(
+        lambda row: f"{row['FIRST NAME']}_{row['LAST NAME']}_{hash(row['PREMIUM TOTAL']) % 10000}",
+        axis=1
+    )
 
-    # Retain relevant columns
-    df = df[['FIRST NAME', 'LAST NAME', 'PREMIUM TOTAL']]
-
-    # Save cleaned file
-    df.to_excel(output_path, index=False, engine='openpyxl')
     return df
 
-def clean_principal_file(file_path, output_path):
-    """Cleans the Principal test file."""
-    df = pd.read_excel(file_path)
 
-    # Standardize column names
+
+# Function to clean Principal file
+def clean_principal_file(df):
+    """
+    Cleans the Principal test file by:
+    - Normalizing column names (case-insensitive, trims whitespace)
+    - Splitting 'MEMBER NAME' into 'FIRST NAME' and 'LAST NAME'
+    - Removing whitespaces and dashes in names
+    - Removing rows with missing names or premiums
+    - Converting premiums to numeric values
+    - Assigning unique IDs
+    """
+    # Normalize column names
     df.columns = df.columns.str.strip().str.upper()
 
-    # Validate required columns
-    required_columns = ['MEMBER NAME', 'TOTAL PREMIUM']
-    missing_columns = [col for col in required_columns if col not in df.columns]
-    if missing_columns:
-        raise KeyError(f"Missing required columns in principal_test file: {missing_columns}")
+    # Ensure required columns exist
+    if 'MEMBER NAME' not in df.columns or 'TOTAL PREMIUM' not in df.columns:
+        raise KeyError("Principal file is missing required columns: 'MEMBER NAME', 'TOTAL PREMIUM'")
 
-    # Split MEMBER NAME into FIRST NAME and LAST NAME
+    # Split 'MEMBER NAME' into 'FIRST NAME' and 'LAST NAME'
     name_split = df['MEMBER NAME'].str.split(',', expand=True)
-    df['LAST NAME'] = name_split[0].str.strip().str.upper()
-    df['FIRST NAME'] = name_split[1].str.strip().str.upper() if name_split.shape[1] > 1 else None
+    df['LAST NAME'] = name_split[0].str.strip().str.replace(r"[\s-]", "", regex=True).str.upper()
+    df['FIRST NAME'] = name_split[1].str.strip().str.replace(r"[\s-]", "", regex=True).str.upper() if name_split.shape[1] > 1 else None
 
-    # Rename TOTAL PREMIUM
-    df.rename(columns={'TOTAL PREMIUM': 'PRINCIPAL PREMIUM'}, inplace=True)
+    # Ensure 'TOTAL PREMIUM' is numeric and clean rows
+    df['PRINCIPAL PREMIUM'] = pd.to_numeric(df['TOTAL PREMIUM'], errors='coerce')
+    df = df[df['PRINCIPAL PREMIUM'].notna()]  # Remove rows with non-numeric premiums
 
-    # Preprocess names
-    df = preprocess_names(df, 'FIRST NAME', 'LAST NAME')
-
-    # Retain relevant columns
-    df = df[['FIRST NAME', 'LAST NAME', 'PRINCIPAL PREMIUM']]
-
-    # Save cleaned file
-    df.to_excel(output_path, index=False, engine='openpyxl')
-    return df
-
-def finalize_output(combined_df):
-    """Finalizes the output file."""
-    # Debugging: Check available columns
-    print("Available columns in combined_df:", combined_df.columns)
-
-    # Dynamically drop unnecessary columns if they exist
-    columns_to_drop = ['FULL NAME_X', 'FULL NAME_Y', 'MATCHED_X', 'MATCHED_Y']
-    existing_columns = [col for col in columns_to_drop if col in combined_df.columns]
-    combined_df.drop(columns=existing_columns, inplace=True)
-
-    # Reorder columns to make UNIQUE ID the first column
-    columns_order = ['UNIQUE ID', 'FIRST NAME', 'LAST NAME', 'PREMIUM TOTAL', 'PRINCIPAL PREMIUM', 'STATUS', 'ISSUE']
-    combined_df = combined_df[[col for col in columns_order if col in combined_df.columns]]
-
-    return combined_df
-def save_final_output(df, output_path):
-    """Saves the final DataFrame to an Excel file."""
-    df.to_excel(output_path, index=False, engine='openpyxl')
-    logging.info(f"Discrepancy report saved to {output_path}")
-
-def main():
-    ee_nav_file = "eenav_test.xlsx"
-    principal_file = "principal_test.xlsx"
-    ee_nav_clean_file = "eenav_clean.xlsx"
-    principal_clean_file = "principal_clean.xlsx"
-    output_file = "discrepancies.xlsx"
-
-    # Clean files
-    ee_nav_cleaned = clean_eenav_file(ee_nav_file, ee_nav_clean_file)
-    principal_cleaned = clean_principal_file(principal_file, principal_clean_file)
-
-    # Prepare full names for matching
-    ee_nav_cleaned['FULL NAME'] = ee_nav_cleaned['FIRST NAME'] + ' ' + ee_nav_cleaned['LAST NAME']
-    principal_cleaned['FULL NAME'] = principal_cleaned['FIRST NAME'] + ' ' + principal_cleaned['LAST NAME']
-
-    # Fuzzy match
-    matched_ee_nav, matched_principal, _, _ = fuzzy_match_names(ee_nav_cleaned, principal_cleaned)
+    # Drop rows with missing names
+    df = df[df['FIRST NAME'].notna() & df['LAST NAME'].notna()]
 
     # Assign unique IDs
-    matched_ee_nav['UNIQUE ID'] = (
-        matched_ee_nav['FIRST NAME'] + ' ' + matched_ee_nav['LAST NAME']
-    ).apply(generate_unique_id)
+    df['UNIQUE ID'] = df.apply(
+        lambda row: f"{row['FIRST NAME']}_{row['LAST NAME']}_{hash(row['PRINCIPAL PREMIUM']) % 10000}",
+        axis=1
+    )
 
-    # Compare premiums
-    discrepancies = compare_premiums(matched_ee_nav, matched_principal)
+    # Retain only relevant columns
+    return df[['UNIQUE ID', 'FIRST NAME', 'LAST NAME', 'PRINCIPAL PREMIUM']]
 
-    # Finalize and save output
-    finalized_df = finalize_output(discrepancies)
-    save_final_output(finalized_df, output_file)
 
-if __name__ == "__main__":
-    main()
+
+# Function to compare files
+def compare_files(df_ee_cleaned, df_principal_cleaned):
+    """Compare EE Nav and Principal files and return a combined DataFrame."""
+    # Merge dataframes on 'FIRST NAME' and 'LAST NAME'
+    combined = pd.merge(
+        df_ee_cleaned,
+        df_principal_cleaned,
+        on=["FIRST NAME", "LAST NAME"],
+        how="outer",
+        suffixes=('_ee', '_principal')
+    )
+
+    # Add Status and Issue columns
+    combined['STATUS'] = 'Valid'
+    combined['ISSUE'] = None
+
+    for idx, row in combined.iterrows():
+        if pd.isna(row['PREMIUM TOTAL']) and pd.isna(row['PRINCIPAL PREMIUM']):
+            combined.at[idx, 'STATUS'] = 'Invalid'
+            combined.at[idx, 'ISSUE'] = 'Missing Both Premiums'
+        elif pd.isna(row['PREMIUM TOTAL']):
+            combined.at[idx, 'STATUS'] = 'Invalid'
+            combined.at[idx, 'ISSUE'] = 'Missing EE Nav Premium'
+        elif pd.isna(row['PRINCIPAL PREMIUM']):
+            combined.at[idx, 'STATUS'] = 'Invalid'
+            combined.at[idx, 'ISSUE'] = 'Missing Principal Premium'
+        elif row['PREMIUM TOTAL'] != row['PRINCIPAL PREMIUM']:
+            combined.at[idx, 'STATUS'] = 'Invalid'
+            combined.at[idx, 'ISSUE'] = 'Premium Mismatch'
+
+    # Generate unique IDs for each row
+    combined['UNIQUE ID'] = combined.apply(
+        lambda x: hashlib.sha256(f"{x['FIRST NAME']}{x['LAST NAME']}".encode()).hexdigest()[:8]
+        if pd.notna(x['FIRST NAME']) and pd.notna(x['LAST NAME']) else None,
+        axis=1
+    )
+
+    # Reorder columns for better readability
+    combined = combined[['UNIQUE ID', 'FIRST NAME', 'LAST NAME', 'PREMIUM TOTAL', 'PRINCIPAL PREMIUM', 'STATUS', 'ISSUE']]
+
+    # Return the final combined DataFrame
+    return combined
