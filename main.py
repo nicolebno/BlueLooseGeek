@@ -4,40 +4,24 @@ import hashlib
 # Function to clean EE Nav file
 def clean_eenav_file(df):
     """
-    Cleans the EE Nav test file by:
-    - Normalizing column names (case-insensitive, trims whitespace)
-    - Ensuring required columns exist
-    - Removing rows with missing names
-    - Removing whitespaces and dashes in names
-    - Converting premiums to numeric values
-    - Assigning unique IDs
+    Cleans the EE Nav file by ensuring relevant columns are present, cleaning data, and 
+    extracting the required columns for further processing.
     """
-    # Normalize column names
-    df.columns = df.columns.str.strip().str.upper()
+    # Ensure 'Plan Cost' is numeric and clean rows
+    df['Plan Cost'] = pd.to_numeric(df['Plan Cost'], errors='coerce')  # Convert 'Plan Cost' to numeric
+    df = df[df['Plan Cost'].notna()]  # Remove rows with non-numeric 'Plan Cost'
 
-    # Ensure required columns exist
-    required_columns = ['FIRST NAME', 'LAST NAME', 'PREMIUM TOTAL']
-    missing_columns = [col for col in required_columns if col not in df.columns]
-    if missing_columns:
-        raise KeyError(f"Missing required columns in EE Nav file: {missing_columns}")
-
-    # Drop rows where first or last name is missing
+    # Drop rows with missing names
     df = df[df['FIRST NAME'].notna() & df['LAST NAME'].notna()]
-
-    # Remove whitespaces and dashes from names
-    df['FIRST NAME'] = df['FIRST NAME'].str.replace(r"[\s-]", "", regex=True).str.upper()
-    df['LAST NAME'] = df['LAST NAME'].str.replace(r"[\s-]", "", regex=True).str.upper()
-
-    # Ensure PREMIUM TOTAL is numeric
-    df['PREMIUM TOTAL'] = pd.to_numeric(df['PREMIUM TOTAL'], errors='coerce').fillna(0)
 
     # Assign unique IDs
     df['UNIQUE ID'] = df.apply(
-        lambda row: f"{row['FIRST NAME']}_{row['LAST NAME']}_{hash(row['PREMIUM TOTAL']) % 10000}",
+        lambda row: f"{row['FIRST NAME'].strip().lower()}_{row['LAST NAME'].strip().lower()}",
         axis=1
     )
 
-    return df
+    # Retain only relevant columns
+    return df[['UNIQUE ID', 'FIRST NAME', 'LAST NAME', 'Plan Cost']]
 
 
 
