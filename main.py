@@ -1,6 +1,7 @@
 import pandas as pd
 import hashlib
 
+
 # Debugging helper function
 def debug_print(message, df=None):
     """Helper function to print debug messages and DataFrame previews."""
@@ -8,6 +9,15 @@ def debug_print(message, df=None):
     if df is not None:
         print(df.head())
         print(f"Columns: {list(df.columns)}\n")
+
+
+# Function to normalize names (remove spaces, dashes, and make lowercase)
+def normalize_name(name):
+    """Normalize names by removing spaces, dashes, and converting to lowercase."""
+    if pd.isna(name):
+        return None
+    return ''.join(name.split()).replace('-', '').lower()
+
 
 # Function to validate input files for required columns
 def validate_input_file(df, required_columns, file_name):
@@ -17,11 +27,12 @@ def validate_input_file(df, required_columns, file_name):
     """
     # Normalize column names to ensure whitespace is ignored
     df.columns = df.columns.str.strip().str.upper()
-    
+
     # Check for missing columns
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
         raise KeyError(f"{file_name} is missing required columns: {missing_columns}")
+
 
 # Function to compare files
 def compare_files(df_ee, df_principal):
@@ -31,25 +42,44 @@ def compare_files(df_ee, df_principal):
     debug_print("Comparing files: EE Nav file:", df_ee)
     debug_print("Comparing files: Principal file:", df_principal)
 
-    # Merge dataframes on 'FIRST NAME' and 'LAST NAME'
+    # Normalize names in both dataframes
+    df_ee['NORMALIZED FIRST NAME'] = df_ee['FIRST NAME'].apply(normalize_name)
+    df_ee['NORMALIZED LAST NAME'] = df_ee['LAST NAME'].apply(normalize_name)
+
+    df_principal['NORMALIZED FIRST NAME'] = df_principal['FIRST NAME'].apply(normalize_name)
+    df_principal['NORMALIZED LAST NAME'] = df_principal['LAST NAME'].apply(normalize_name)
+
+    # Merge dataframes on normalized names
     combined = pd.merge(
         df_ee,
         df_principal,
-        on=["FIRST NAME", "LAST NAME"],
-        how="outer",
+        on=['NORMALIZED FIRST NAME', 'NORMALIZED LAST NAME'],
+        how='outer',
         suffixes=('_ee', '_principal'),
-        indicator=True  # Add indicator to track matched/unmatched rows
+        indicator=True
     )
 
-    # Remove rows where both 'FIRST NAME' and 'LAST NAME' are missing
-    combined = combined[~(combined['FIRST NAME'].isna() & combined['LAST NAME'].isna())]
+    # Remove rows where both normalized names are missing
+    combined = combined[~(combined['NORMALIZED FIRST NAME'].isna() & combined['NORMALIZED LAST NAME'].isna())]
+
+    # Generate unique IDs based on normalized names
+    combined['UNIQUE ID'] = combined.apply(
+        lambda x: hashlib.sha256(
+            f"{x['NORMALIZED FIRST NAME']}{x['NORMALIZED LAST NAME']}".encode()
+        ).hexdigest()[:8]
+        if pd.notna(x['NORMALIZED FIRST NAME']) and pd.notna(x['NORMALIZED LAST NAME']) else None,
+        axis=1
+    )
 
     # Add Status and Issue columns
-    combined['STATUS'] = 'Valid'
+    combined['STATUS'] = None
     combined['ISSUE'] = None
 
-    # Identify issues in the data
     for idx, row in combined.iterrows():
+        if pd.isna(row['UNIQUE ID']):
+            # Skip validation for rows without unique IDs
+            continue
+
         if row['_merge'] == 'left_only':  # EE Nav only
             combined.at[idx, 'STATUS'] = 'Invalid'
             combined.at[idx, 'ISSUE'] = 'Missing Principal Premium'
@@ -63,15 +93,8 @@ def compare_files(df_ee, df_principal):
             combined.at[idx, 'STATUS'] = 'Invalid'
             combined.at[idx, 'ISSUE'] = 'Premium Mismatch'
 
-    # Drop unnecessary rows and columns
-    combined.drop(columns=['_merge'], inplace=True)
-
-    # Generate unique IDs for each row
-    combined['UNIQUE ID'] = combined.apply(
-        lambda x: hashlib.sha256(f"{x['FIRST NAME']}{x['LAST NAME']}".encode()).hexdigest()[:8]
-        if pd.notna(x['FIRST NAME']) and pd.notna(x['LAST NAME']) else None,
-        axis=1
-    )
+    # Drop unnecessary columns
+    combined.drop(columns=['_merge', 'NORMALIZED FIRST NAME', 'NORMALIZED LAST NAME'], inplace=True)
 
     # Reorder columns for better readability
     combined = combined[['UNIQUE ID', 'FIRST NAME', 'LAST NAME', 'TOTAL PREMIUM', 'PRINCIPAL PREMIUM', 'STATUS', 'ISSUE']]
@@ -79,12 +102,16 @@ def compare_files(df_ee, df_principal):
 
     return combined
 
+
 # Main function for testing purposes
 def main():
     # Load example files (replace with your file paths for testing)
     try:
         df_ee = pd.read_excel("ee_nav_file.xlsx")
+        debug_print("Loaded EE Nav file:", df_ee)
+
         df_principal = pd.read_excel("principal_file.xlsx")
+        debug_print("Loaded Principal file:", df_principal)
     except Exception as e:
         print(f"[ERROR] Failed to load files: {e}")
         return
@@ -112,6 +139,6 @@ def main():
     except Exception as e:
         print(f"[ERROR] Failed to compare files: {e}")
 
+
 if __name__ == "__main__":
     main()
-
