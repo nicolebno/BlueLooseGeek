@@ -48,12 +48,15 @@ def clean_principal_file(df):
     Cleans the Principal file by normalizing column names,
     splitting 'MEMBER NAME', and ensuring required data integrity.
     """
-    debug_print("Cleaning Principal file (raw input):", df)
+    print("[DEBUG] Raw Principal File Columns:", df.columns)
+
     # Normalize column names
     df.columns = df.columns.str.strip().str.upper()
+    print("[DEBUG] Normalized Principal File Columns:", df.columns)
 
     # Ensure required columns exist
-    validate_file_columns(df, ['MEMBER NAME', 'TOTAL PREMIUM'], "Principal File")
+    if 'MEMBER NAME' not in df.columns or 'TOTAL PREMIUM' not in df.columns:
+        raise KeyError("Principal file is missing required columns: 'MEMBER NAME', 'TOTAL PREMIUM'")
 
     # Split 'MEMBER NAME' into 'FIRST NAME' and 'LAST NAME'
     name_split = df['MEMBER NAME'].str.split(',', expand=True)
@@ -75,8 +78,9 @@ def clean_principal_file(df):
 
     # Retain only relevant columns
     cleaned_df = df[['UNIQUE ID', 'FIRST NAME', 'LAST NAME', 'PRINCIPAL PREMIUM']]
-    debug_print("Principal file cleaned:", cleaned_df)
+    print("[DEBUG] Cleaned Principal File:\n", cleaned_df.head())
     return cleaned_df
+
 
 # Function to compare files
 def compare_files(df_ee_cleaned, df_principal_cleaned):
