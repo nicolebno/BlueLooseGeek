@@ -3,6 +3,7 @@ import hashlib
 
 # Debugging helper function
 def debug_print(message, df=None):
+    """Helper function to print debug messages and DataFrame previews."""
     print(f"[DEBUG] {message}")
     if df is not None:
         print(df.head())
@@ -10,7 +11,14 @@ def debug_print(message, df=None):
 
 # Function to validate input files for required columns
 def validate_input_file(df, required_columns, file_name):
-    """Ensure the raw input file contains the required columns."""
+    """
+    Ensure the input file contains the required columns.
+    Normalizes column names by stripping whitespace.
+    """
+    # Normalize column names to ensure whitespace is ignored
+    df.columns = df.columns.str.strip().str.upper()
+    
+    # Check for missing columns
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
         raise KeyError(f"{file_name} is missing required columns: {missing_columns}")
@@ -37,16 +45,16 @@ def compare_files(df_ee, df_principal):
     combined['ISSUE'] = None
 
     for idx, row in combined.iterrows():
-        if pd.isna(row['Plan Cost']) and pd.isna(row['PRINCIPAL PREMIUM']):
+        if pd.isna(row['TOTAL PREMIUM']) and pd.isna(row['PRINCIPAL PREMIUM']):
             combined.at[idx, 'STATUS'] = 'Invalid'
             combined.at[idx, 'ISSUE'] = 'Missing Both Premiums'
-        elif pd.isna(row['Plan Cost']):
+        elif pd.isna(row['TOTAL PREMIUM']):
             combined.at[idx, 'STATUS'] = 'Invalid'
             combined.at[idx, 'ISSUE'] = 'Missing EE Nav Premium'
         elif pd.isna(row['PRINCIPAL PREMIUM']):
             combined.at[idx, 'STATUS'] = 'Invalid'
             combined.at[idx, 'ISSUE'] = 'Missing Principal Premium'
-        elif row['Plan Cost'] != row['PRINCIPAL PREMIUM']:
+        elif row['TOTAL PREMIUM'] != row['PRINCIPAL PREMIUM']:
             combined.at[idx, 'STATUS'] = 'Invalid'
             combined.at[idx, 'ISSUE'] = 'Premium Mismatch'
 
@@ -58,12 +66,16 @@ def compare_files(df_ee, df_principal):
     )
 
     # Reorder columns for better readability
-    combined = combined[['UNIQUE ID', 'FIRST NAME', 'LAST NAME', 'Plan Cost', 'PRINCIPAL PREMIUM', 'STATUS', 'ISSUE']]
+    combined = combined[['UNIQUE ID', 'FIRST NAME', 'LAST NAME', 'TOTAL PREMIUM', 'PRINCIPAL PREMIUM', 'STATUS', 'ISSUE']]
     debug_print("Comparison result:", combined)
     return combined
 
 # Main script
 def main():
+    # Define required columns for each file
+    ee_required_columns = ['FIRST NAME', 'LAST NAME', 'TOTAL PREMIUM']
+    principal_required_columns = ['FIRST NAME', 'LAST NAME', 'PRINCIPAL PREMIUM']
+
     # Load raw files
     try:
         df_ee = pd.read_excel("ee_nav_file.xlsx")
@@ -74,10 +86,13 @@ def main():
 
     # Validate files
     try:
-        validate_input_file(df_ee, ['FIRST NAME', 'LAST NAME', 'Plan Cost'], "EE Nav File")
-        validate_input_file(df_principal, ['FIRST NAME', 'LAST NAME', 'PRINCIPAL PREMIUM'], "Principal File")
+        validate_input_file(df_ee, ee_required_columns, "EE Nav File")
+        validate_input_file(df_principal, principal_required_columns, "Principal File")
     except KeyError as e:
         print(f"[ERROR] Validation error: {e}")
+        return
+    except Exception as e:
+        print(f"[ERROR] Unexpected error during validation: {e}")
         return
 
     # Compare files
@@ -90,5 +105,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
