@@ -26,7 +26,7 @@ def validate_input_file(df, required_columns, file_name):
 # Function to compare files
 def compare_files(df_ee, df_principal):
     """
-    Compare EE Nav and Principal files, and return a combined DataFrame.
+    Compare EE Nav and Principal files, consolidate matches, and return a combined DataFrame.
     """
     debug_print("Comparing files: EE Nav file:", df_ee)
     debug_print("Comparing files: Principal file:", df_principal)
@@ -37,26 +37,34 @@ def compare_files(df_ee, df_principal):
         df_principal,
         on=["FIRST NAME", "LAST NAME"],
         how="outer",
-        suffixes=('_ee', '_principal')
+        suffixes=('_ee', '_principal'),
+        indicator=True  # Add indicator to track matched/unmatched rows
     )
+
+    # Remove rows where both 'FIRST NAME' and 'LAST NAME' are missing
+    combined = combined[~(combined['FIRST NAME'].isna() & combined['LAST NAME'].isna())]
 
     # Add Status and Issue columns
     combined['STATUS'] = 'Valid'
     combined['ISSUE'] = None
 
+    # Identify issues in the data
     for idx, row in combined.iterrows():
-        if pd.isna(row['TOTAL PREMIUM']) and pd.isna(row['PRINCIPAL PREMIUM']):
-            combined.at[idx, 'STATUS'] = 'Invalid'
-            combined.at[idx, 'ISSUE'] = 'Missing Both Premiums'
-        elif pd.isna(row['TOTAL PREMIUM']):
-            combined.at[idx, 'STATUS'] = 'Invalid'
-            combined.at[idx, 'ISSUE'] = 'Missing EE Nav Premium'
-        elif pd.isna(row['PRINCIPAL PREMIUM']):
+        if row['_merge'] == 'left_only':  # EE Nav only
             combined.at[idx, 'STATUS'] = 'Invalid'
             combined.at[idx, 'ISSUE'] = 'Missing Principal Premium'
+        elif row['_merge'] == 'right_only':  # Principal file only
+            combined.at[idx, 'STATUS'] = 'Invalid'
+            combined.at[idx, 'ISSUE'] = 'Missing EE Nav Premium'
+        elif pd.isna(row['TOTAL PREMIUM']) or pd.isna(row['PRINCIPAL PREMIUM']):
+            combined.at[idx, 'STATUS'] = 'Invalid'
+            combined.at[idx, 'ISSUE'] = 'Missing Premium Data'
         elif row['TOTAL PREMIUM'] != row['PRINCIPAL PREMIUM']:
             combined.at[idx, 'STATUS'] = 'Invalid'
             combined.at[idx, 'ISSUE'] = 'Premium Mismatch'
+
+    # Drop unnecessary rows and columns
+    combined.drop(columns=['_merge'], inplace=True)
 
     # Generate unique IDs for each row
     combined['UNIQUE ID'] = combined.apply(
@@ -67,7 +75,8 @@ def compare_files(df_ee, df_principal):
 
     # Reorder columns for better readability
     combined = combined[['UNIQUE ID', 'FIRST NAME', 'LAST NAME', 'TOTAL PREMIUM', 'PRINCIPAL PREMIUM', 'STATUS', 'ISSUE']]
-    debug_print("Comparison result:", combined)
+    debug_print("Final Comparison Result:", combined)
+
     return combined
 
 # Main function for testing purposes
@@ -105,3 +114,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
