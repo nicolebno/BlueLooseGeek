@@ -71,36 +71,49 @@ def compare_files(df_ee, df_principal):
         axis=1
     )
 
-    # Add Status and Issue columns
-    combined['STATUS'] = None
-    combined['ISSUE'] = None
+    # Consolidate rows by unique ID
+    consolidated = combined.groupby('UNIQUE ID', dropna=False).agg({
+        'FIRST NAME_ee': 'first',
+        'LAST NAME_ee': 'first',
+        'TOTAL PREMIUM': 'first',
+        'FIRST NAME_principal': 'first',
+        'LAST NAME_principal': 'first',
+        'PRINCIPAL PREMIUM': 'first',
+        '_merge': 'first'
+    }).reset_index()
 
-    for idx, row in combined.iterrows():
+    # Add Status and Issue columns
+    consolidated['STATUS'] = None
+    consolidated['ISSUE'] = None
+
+    for idx, row in consolidated.iterrows():
         if pd.isna(row['UNIQUE ID']):
             # Skip validation for rows without unique IDs
             continue
 
         if row['_merge'] == 'left_only':  # EE Nav only
-            combined.at[idx, 'STATUS'] = 'Invalid'
-            combined.at[idx, 'ISSUE'] = 'Missing Principal Premium'
+            consolidated.at[idx, 'STATUS'] = 'Invalid'
+            consolidated.at[idx, 'ISSUE'] = 'Missing Principal Premium'
         elif row['_merge'] == 'right_only':  # Principal file only
-            combined.at[idx, 'STATUS'] = 'Invalid'
-            combined.at[idx, 'ISSUE'] = 'Missing EE Nav Premium'
+            consolidated.at[idx, 'STATUS'] = 'Invalid'
+            consolidated.at[idx, 'ISSUE'] = 'Missing EE Nav Premium'
         elif pd.isna(row['TOTAL PREMIUM']) or pd.isna(row['PRINCIPAL PREMIUM']):
-            combined.at[idx, 'STATUS'] = 'Invalid'
-            combined.at[idx, 'ISSUE'] = 'Missing Premium Data'
+            consolidated.at[idx, 'STATUS'] = 'Invalid'
+            consolidated.at[idx, 'ISSUE'] = 'Missing Premium Data'
         elif row['TOTAL PREMIUM'] != row['PRINCIPAL PREMIUM']:
-            combined.at[idx, 'STATUS'] = 'Invalid'
-            combined.at[idx, 'ISSUE'] = 'Premium Mismatch'
+            consolidated.at[idx, 'STATUS'] = 'Invalid'
+            consolidated.at[idx, 'ISSUE'] = 'Premium Mismatch'
 
-    # Drop unnecessary columns
-    combined.drop(columns=['_merge', 'NORMALIZED FIRST NAME', 'NORMALIZED LAST NAME'], inplace=True)
+    # Rename and reorder columns for readability
+    consolidated.rename(columns={
+        'FIRST NAME_ee': 'FIRST NAME',
+        'LAST NAME_ee': 'LAST NAME',
+    }, inplace=True)
 
-    # Reorder columns for better readability
-    combined = combined[['UNIQUE ID', 'FIRST NAME', 'LAST NAME', 'TOTAL PREMIUM', 'PRINCIPAL PREMIUM', 'STATUS', 'ISSUE']]
-    debug_print("Final Comparison Result:", combined)
+    consolidated = consolidated[['UNIQUE ID', 'FIRST NAME', 'LAST NAME', 'TOTAL PREMIUM', 'PRINCIPAL PREMIUM', 'STATUS', 'ISSUE']]
+    debug_print("Final Comparison Result:", consolidated)
 
-    return combined
+    return consolidated
 
 
 # Main function for testing purposes
@@ -142,3 +155,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
