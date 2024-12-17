@@ -1,3 +1,4 @@
+import streamlit as st
 import pandas as pd
 import hashlib
 
@@ -70,39 +71,56 @@ def compare_files(df_ee, df_principal):
     debug_print("Comparison result:", combined)
     return combined
 
-# Main script
+# Streamlit main function
 def main():
-    # Define required columns for each file
-    ee_required_columns = ['FIRST NAME', 'LAST NAME', 'TOTAL PREMIUM']
-    principal_required_columns = ['FIRST NAME', 'LAST NAME', 'PRINCIPAL PREMIUM']
-
-    # Load raw files
-    try:
-        df_ee = pd.read_excel("ee_nav_file.xlsx")
-        df_principal = pd.read_excel("principal_file.xlsx")
-    except Exception as e:
-        print(f"[ERROR] Failed to load files: {e}")
-        return
-
-    # Validate files
-    try:
-        validate_input_file(df_ee, ee_required_columns, "EE Nav File")
-        validate_input_file(df_principal, principal_required_columns, "Principal File")
-    except KeyError as e:
-        print(f"[ERROR] Validation error: {e}")
-        return
-    except Exception as e:
-        print(f"[ERROR] Unexpected error during validation: {e}")
-        return
-
-    # Compare files
-    try:
-        final_output = compare_files(df_ee, df_principal)
-        final_output.to_csv("comparison_result.csv", index=False)
-        print("[SUCCESS] Comparison completed. Results saved to 'comparison_result.csv'.")
-    except Exception as e:
-        print(f"[ERROR] Failed to compare files: {e}")
+    st.title("Premium Comparison App")
+    
+    # File upload widgets
+    st.write("Upload EE Nav File")
+    ee_file = st.file_uploader("Upload EE Nav File", type=["xlsx"], key="ee_file")
+    
+    st.write("Upload Principal File")
+    principal_file = st.file_uploader("Upload Principal File", type=["xlsx"], key="principal_file")
+    
+    # Process files if both are uploaded
+    if ee_file and principal_file:
+        try:
+            # Read the uploaded files
+            df_ee = pd.read_excel(ee_file)
+            df_principal = pd.read_excel(principal_file)
+            
+            # Define required columns
+            required_ee_columns = ['FIRST NAME', 'LAST NAME', 'TOTAL PREMIUM']
+            required_principal_columns = ['FIRST NAME', 'LAST NAME', 'PRINCIPAL PREMIUM']
+            
+            # Normalize column names (strip whitespace, uppercase)
+            df_ee.columns = df_ee.columns.str.strip().str.upper()
+            df_principal.columns = df_principal.columns.str.strip().str.upper()
+            
+            # Validate the column names
+            validate_input_file(df_ee, required_ee_columns, "EE Nav File")
+            validate_input_file(df_principal, required_principal_columns, "Principal File")
+            
+            # Compare the files
+            result = compare_files(df_ee, df_principal)
+            
+            # Display the results
+            st.success("Comparison completed successfully!")
+            st.dataframe(result)
+            
+            # Provide a download link for the results
+            csv = result.to_csv(index=False)
+            st.download_button(
+                label="Download Results as CSV",
+                data=csv,
+                file_name="comparison_result.csv",
+                mime="text/csv"
+            )
+        
+        except KeyError as e:
+            st.error(f"Validation error: {e}")
+        except Exception as e:
+            st.error(f"An unexpected error occurred: {e}")
 
 if __name__ == "__main__":
     main()
-
