@@ -19,9 +19,10 @@ def validate_input_file(df, required_columns, file_name):
 def compare_files(df_ee, df_principal):
     """Compare EE Nav and Principal files, consolidate matches, and return a combined DataFrame."""
     # Normalize column names and remove unnecessary spaces or dashes
-    for col in ['FIRST NAME', 'LAST NAME']:
-        df_ee[col] = df_ee[col].str.strip().str.replace(r"[\s-]", "", regex=True).str.lower()
-        df_principal[col] = df_principal[col].str.strip().str.replace(r"[\s-]", "", regex=True).str.lower()
+    df_ee['FIRST NAME'] = df_ee['FIRST NAME'].str.strip().str.replace(r"[\s-]", "", regex=True).str.lower()
+    df_ee['LAST NAME'] = df_ee['LAST NAME'].str.strip().str.replace(r"[\s-]", "", regex=True).str.lower()
+    df_principal['FIRST NAME'] = df_principal['FIRST NAME'].str.strip().str.replace(r"[\s-]", "", regex=True).str.lower()
+    df_principal['LAST NAME'] = df_principal['LAST NAME'].str.strip().str.replace(r"[\s-]", "", regex=True).str.lower()
 
     # Merge dataframes on normalized names
     combined = pd.merge(
@@ -32,6 +33,9 @@ def compare_files(df_ee, df_principal):
         suffixes=('_ee', '_principal'),
         indicator=True
     )
+
+    # Remove rows where both names are missing
+    combined = combined[~(combined['FIRST NAME'].isna() & combined['LAST NAME'].isna())]
 
     # Add Status and Issue columns
     combined['STATUS'] = 'Valid'
@@ -66,7 +70,6 @@ def compare_files(df_ee, df_principal):
 
     # Reorder columns for better readability
     combined = combined[['UNIQUE ID', 'FIRST NAME', 'LAST NAME', 'TOTAL PREMIUM', 'PRINCIPAL PREMIUM', 'STATUS', 'ISSUE']]
-    debug_print("Final Comparison Result", combined)
     return combined
 
 def create_templates():
@@ -103,18 +106,13 @@ def main():
             required_principal_columns = ['FIRST NAME', 'LAST NAME', 'PRINCIPAL PREMIUM']
 
             validate_input_file(df_ee, required_ee_columns, "EE Nav File")
-            validate_input_file(df_principal, required_principal_columns, "Principal File")
+            validate_input_file(df_principal, required_principal_columns, "Carrier File")
 
             # Perform comparison
             result = compare_files(df_ee, df_principal)
-            st.success("Comparison completed successfully!")
+            st.write("Comparison completed successfully!")
             st.dataframe(result)
-            st.download_button(
-                "Download Results as CSV",
-                data=result.to_csv(index=False).encode('utf-8'),
-                file_name="comparison_result.csv",
-                mime="text/csv"
-            )
+            st.download_button("Download Results as CSV", result.to_csv(index=False), file_name="comparison_result.csv")
 
         except Exception as e:
             st.error(f"An error occurred: {e}")
